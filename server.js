@@ -5,6 +5,7 @@ const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const validator = require("validator");
 const morgan = require("morgan");
+const crypto = require("crypto");
 
 const app = express();
 
@@ -22,6 +23,16 @@ app.use("/send-feedback", feedbackRateLimiter);
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 const sanitize = (value) => validator.escape(String(value ?? ""));
+const parseReceiverEmails = (receiverEmail) =>
+  Array.isArray(receiverEmail)
+    ? receiverEmail.map((email) => String(email).trim()).filter(Boolean)
+    : String(receiverEmail || "")
+        .split(",")
+        .map((email) => email.trim())
+        .filter(Boolean);
+
+const feedbackLinkTokens = new Map();
+const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Create transporter with connection pooling
 const transporter = nodemailer.createTransport({
@@ -49,16 +60,75 @@ app.get("/test-email", async (req, res) => {
   }
 });
 
+app.post("/generate-feedback-link", (req, res) => {
+  try {
+    const token = String(req.body?.token || "").trim() || crypto.randomBytes(24).toString("hex");
+    const receivers = parseReceiverEmails(req.body?.receiverEmail);
+
+    if (!receivers.length) {
+      return res.status(400).json({ message: "Receiver email is required" });
+    }
+
+    const invalidReceivers = receivers.filter((email) => !isValidEmail(email));
+    if (invalidReceivers.length) {
+      return res.status(400).json({
+        message: `Invalid receiver email(s): ${invalidReceivers.join(", ")}`,
+      });
+    }
+
+    const expiresAt = Date.now() + TOKEN_TTL_MS;
+
+    feedbackLinkTokens.set(token, {
+      receivers,
+      expiresAt,
+    });
+
+    return res.status(200).json({
+      token,
+      expiresAt,
+    });
+  } catch (error) {
+    return res
+      .status(500)
+      .json({ message: `Failed to generate feedback link: ${error.message}` });
+  }
+});
+
 // API Route
 app.post("/send-feedback", async (req, res) => {
   try {
-    const { receiverEmail, clientEmail, feedback: formData } = req.body;
-    const receivers = Array.isArray(receiverEmail)
-      ? receiverEmail.map((email) => String(email).trim()).filter(Boolean)
-      : String(receiverEmail || "")
-          .split(",")
-          .map((email) => email.trim())
-          .filter(Boolean);
+    const { receiverEmail, clientEmail, feedback: formData, token } = req.body;
+    let receivers = [];
+    const fallbackReceivers = parseReceiverEmails(receiverEmail);
+
+    if (token) {
+      const tokenEntry = feedbackLinkTokens.get(String(token));
+
+      if (!tokenEntry) {
+        if (fallbackReceivers.length) {
+          receivers = fallbackReceivers;
+        } else {
+          console.warn("❌ Invalid feedback link token");
+          return res.status(400).json({ message: "Invalid feedback link token" });
+        }
+      }
+
+      if (!receivers.length && tokenEntry) {
+        if (Date.now() > tokenEntry.expiresAt) {
+          feedbackLinkTokens.delete(String(token));
+          if (fallbackReceivers.length) {
+            receivers = fallbackReceivers;
+          } else {
+            console.warn("❌ Expired feedback link token");
+            return res.status(400).json({ message: "Feedback link token expired" });
+          }
+        } else {
+          receivers = tokenEntry.receivers;
+        }
+      }
+    } else {
+      receivers = fallbackReceivers;
+    }
 
     // Validation
     if (!receivers.length) {
