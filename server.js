@@ -53,16 +53,25 @@ app.get("/test-email", async (req, res) => {
 app.post("/send-feedback", async (req, res) => {
   try {
     const { receiverEmail, clientEmail, feedback: formData } = req.body;
+    const receivers = Array.isArray(receiverEmail)
+      ? receiverEmail.map((email) => String(email).trim()).filter(Boolean)
+      : String(receiverEmail || "")
+          .split(",")
+          .map((email) => email.trim())
+          .filter(Boolean);
 
     // Validation
-    if (!receiverEmail) {
+    if (!receivers.length) {
       console.warn("❌ Missing receiverEmail");
       return res.status(400).json({ message: "Receiver email is required" });
     }
 
-    if (!isValidEmail(receiverEmail)) {
+    const invalidReceivers = receivers.filter((email) => !isValidEmail(email));
+    if (invalidReceivers.length) {
       console.warn("❌ Invalid receiverEmail format");
-      return res.status(400).json({ message: "Invalid receiver email" });
+      return res.status(400).json({
+        message: `Invalid receiver email(s): ${invalidReceivers.join(", ")}`,
+      });
     }
 
     if (!clientEmail) {
@@ -87,7 +96,9 @@ app.post("/send-feedback", async (req, res) => {
         .json({ message: "Feedback must be a JSON object" });
     }
 
-    console.log(`📤 Sending email from ${clientEmail} to ${receiverEmail}`);
+    console.log(
+      `📤 Sending email from ${clientEmail} to ${receivers.join(", ")}`
+    );
 
     const safe = (value) => {
       const escapedValue = sanitize(value).trim();
@@ -127,7 +138,7 @@ app.post("/send-feedback", async (req, res) => {
 
     // Email options
     const mailOptions = {
-      to: receiverEmail,
+      to: receivers,
       from: `"New Client Feedback" <${process.env.EMAIL_USER}>`,
       replyTo: clientEmail,
       subject: "New Client Feedback",
