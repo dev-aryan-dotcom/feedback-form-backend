@@ -50,28 +50,27 @@ const smtpSecure =
     : smtpPort === 465;
 const fallbackSmtpPort = smtpPort === 465 ? 587 : 465;
 
-const resolveSmtpHost = async () => {
-  let resolvedHost = smtpHost;
+const resolveSmtpHosts = async () => {
+  let resolvedHosts = [smtpHost];
 
   if (smtpHost === "smtp.gmail.com") {
     try {
       const ipv4Records = await dnsPromises.resolve4(smtpHost);
       if (ipv4Records.length) {
-        resolvedHost = ipv4Records[0];
+        resolvedHosts = ipv4Records;
       }
     } catch (error) {
       console.warn(`⚠️ SMTP IPv4 lookup failed, falling back to hostname: ${error.message}`);
     }
   }
 
-  return resolvedHost;
+  return resolvedHosts;
 };
 
-const createTransporter = async (port = smtpPort) => {
-  const resolvedHost = await resolveSmtpHost();
+const createTransporter = async (host = smtpHost, port = smtpPort) => {
 
   return nodemailer.createTransport({
-    host: resolvedHost,
+    host,
     port,
     secure: port === 465,
     auth: {
@@ -90,24 +89,29 @@ const createTransporter = async (port = smtpPort) => {
 
 const sendWithFallback = async (mailOptions) => {
   const portsToTry = smtpPort === fallbackSmtpPort ? [smtpPort] : [smtpPort, fallbackSmtpPort];
+  const hostsToTry = await resolveSmtpHosts();
   let lastError;
 
-  for (const port of portsToTry) {
-    try {
-      const transporter = await createTransporter(port);
-      await transporter.sendMail(mailOptions);
-      return;
-    } catch (error) {
-      lastError = error;
-      const retryableError =
-        ["ETIMEDOUT", "ESOCKET", "ECONNRESET", "ENETUNREACH", "EHOSTUNREACH"].includes(error.code) ||
-        /timeout/i.test(error.message || "");
+  for (const host of hostsToTry) {
+    for (const port of portsToTry) {
+      try {
+        const transporter = await createTransporter(host, port);
+        await transporter.sendMail(mailOptions);
+        return;
+      } catch (error) {
+        lastError = error;
+        const retryableError =
+          ["ETIMEDOUT", "ESOCKET", "ECONNRESET", "ENETUNREACH", "EHOSTUNREACH"].includes(error.code) ||
+          /timeout/i.test(error.message || "");
 
-      if (!retryableError || port === portsToTry[portsToTry.length - 1]) {
-        throw error;
+        if (!retryableError) {
+          throw error;
+        }
+
+        console.warn(
+          `⚠️ SMTP send failed on host ${host} port ${port}: ${error.message}`
+        );
       }
-
-      console.warn(`⚠️ SMTP send failed on port ${port}, retrying with fallback port ${fallbackSmtpPort}: ${error.message}`);
     }
   }
 
