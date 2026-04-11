@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const validator = require("validator");
@@ -44,11 +45,12 @@ const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
 const smtpPort = Number(process.env.SMTP_PORT || 465);
-const smtpSecure =
-  process.env.SMTP_SECURE != null
-    ? String(process.env.SMTP_SECURE).toLowerCase() === "true"
-    : smtpPort === 465;
 const fallbackSmtpPort = smtpPort === 465 ? 587 : 465;
+const resendApiKey = String(process.env.RESEND_API_KEY || "").trim();
+const resendFromEmail = String(
+  process.env.RESEND_FROM_EMAIL || process.env.EMAIL_USER || "onboarding@resend.dev"
+).trim();
+const resendClient = resendApiKey ? new Resend(resendApiKey) : null;
 
 const resolveSmtpHosts = async () => {
   let resolvedHosts = [smtpHost];
@@ -68,7 +70,6 @@ const resolveSmtpHosts = async () => {
 };
 
 const createTransporter = async (host = smtpHost, port = smtpPort) => {
-
   return nodemailer.createTransport({
     host,
     port,
@@ -118,12 +119,49 @@ const sendWithFallback = async (mailOptions) => {
   throw lastError;
 };
 
+const sendWithResend = async (mailOptions) => {
+  if (!resendClient) {
+    throw new Error("RESEND_API_KEY is not configured");
+  }
+
+  const { error } = await resendClient.emails.send({
+    from: resendFromEmail,
+    to: mailOptions.to,
+    replyTo: mailOptions.replyTo,
+    subject: mailOptions.subject,
+    html: mailOptions.html,
+    text: mailOptions.text,
+  });
+
+  if (error) {
+    throw new Error(error.message || "Resend email send failed");
+  }
+};
+
+const sendEmail = async (mailOptions) => {
+  if (resendClient) {
+    return sendWithResend(mailOptions);
+  }
+
+  return sendWithFallback(mailOptions);
+};
+
 // Test endpoint to verify email config
 app.get("/test-email", async (req, res) => {
   try {
+    if (resendClient) {
+      if (!resendFromEmail) {
+        return res.status(500).json({ message: "❌ RESEND_FROM_EMAIL is missing" });
+      }
+
+      return res.status(200).json({
+        message: `✅ Resend configuration is valid (${resendFromEmail})`,
+      });
+    }
+
     const transporter = await createTransporter();
     await transporter.verify();
-    res.status(200).json({ message: "✅ Email configuration is valid" });
+    res.status(200).json({ message: "✅ SMTP email configuration is valid" });
   } catch (error) {
     res
       .status(500)
@@ -388,7 +426,7 @@ app.post("/send-feedback", async (req, res) => {
 `,
     };
 
-    await sendWithFallback(mailOptions);
+    await sendEmail(mailOptions);
     console.log("✅ Email sent successfully");
 
     res.status(200).json({ message: "Feedback received" });
