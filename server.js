@@ -20,6 +20,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(morgan("dev"));
+app.set("trust proxy", 1);
 
 const feedbackRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -47,8 +48,9 @@ const smtpSecure =
   process.env.SMTP_SECURE != null
     ? String(process.env.SMTP_SECURE).toLowerCase() === "true"
     : smtpPort === 465;
+const fallbackSmtpPort = smtpPort === 465 ? 587 : 465;
 
-const createTransporter = async () => {
+const resolveSmtpHost = async () => {
   let resolvedHost = smtpHost;
 
   if (smtpHost === "smtp.gmail.com") {
@@ -62,10 +64,16 @@ const createTransporter = async () => {
     }
   }
 
+  return resolvedHost;
+};
+
+const createTransporter = async (port = smtpPort) => {
+  const resolvedHost = await resolveSmtpHost();
+
   return nodemailer.createTransport({
     host: resolvedHost,
-    port: smtpPort,
-    secure: smtpSecure,
+    port,
+    secure: port === 465,
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
@@ -78,6 +86,32 @@ const createTransporter = async () => {
       servername: smtpHost,
     },
   });
+};
+
+const sendWithFallback = async (mailOptions) => {
+  const portsToTry = smtpPort === fallbackSmtpPort ? [smtpPort] : [smtpPort, fallbackSmtpPort];
+  let lastError;
+
+  for (const port of portsToTry) {
+    try {
+      const transporter = await createTransporter(port);
+      await transporter.sendMail(mailOptions);
+      return;
+    } catch (error) {
+      lastError = error;
+      const retryableError =
+        ["ETIMEDOUT", "ESOCKET", "ECONNRESET", "ENETUNREACH", "EHOSTUNREACH"].includes(error.code) ||
+        /timeout/i.test(error.message || "");
+
+      if (!retryableError || port === portsToTry[portsToTry.length - 1]) {
+        throw error;
+      }
+
+      console.warn(`⚠️ SMTP send failed on port ${port}, retrying with fallback port ${fallbackSmtpPort}: ${error.message}`);
+    }
+  }
+
+  throw lastError;
 };
 
 // Test endpoint to verify email config
@@ -350,8 +384,7 @@ app.post("/send-feedback", async (req, res) => {
 `,
     };
 
-    const transporter = await createTransporter();
-    await transporter.sendMail(mailOptions);
+    await sendWithFallback(mailOptions);
     console.log("✅ Email sent successfully");
 
     res.status(200).json({ message: "Feedback received" });
