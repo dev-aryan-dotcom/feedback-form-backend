@@ -6,6 +6,12 @@ const rateLimit = require("express-rate-limit");
 const validator = require("validator");
 const morgan = require("morgan");
 const crypto = require("crypto");
+const dns = require("dns");
+
+// Prefer IPv4 first to avoid SMTP failures on networks without IPv6 routing.
+if (typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
 
 const app = express();
 
@@ -34,18 +40,30 @@ const parseReceiverEmails = (receiverEmail) =>
 const feedbackLinkTokens = new Map();
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-// Create transporter with connection pooling
+const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
+const smtpPort = Number(process.env.SMTP_PORT || 465);
+const smtpSecure =
+  process.env.SMTP_SECURE != null
+    ? String(process.env.SMTP_SECURE).toLowerCase() === "true"
+    : smtpPort === 465;
+
+// Create transporter with explicit SMTP timeouts and IPv4 preference.
 const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false,
+  host: smtpHost,
+  port: smtpPort,
+  secure: smtpSecure,
+  family: 4,
+  connectionTimeout: 15000,
+  greetingTimeout: 10000,
+  socketTimeout: 20000,
+  dnsTimeout: 10000,
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
-  pool: true, // Enable connection pooling
-  maxConnections: 5,
-  maxMessages: 100,
+  tls: {
+    servername: smtpHost,
+  },
 });
 
 // Test endpoint to verify email config
@@ -317,10 +335,8 @@ app.post("/send-feedback", async (req, res) => {
 `,
     };
 
-    transporter
-      .sendMail(mailOptions)
-      .then(() => console.log("✅ Email sent successfully"))
-      .catch((err) => console.error("❌ Error sending email:", err.message));
+    await transporter.sendMail(mailOptions);
+    console.log("✅ Email sent successfully");
 
     res.status(200).json({ message: "Feedback received" });
   } catch (error) {
