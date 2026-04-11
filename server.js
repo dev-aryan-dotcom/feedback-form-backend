@@ -7,6 +7,7 @@ const validator = require("validator");
 const morgan = require("morgan");
 const crypto = require("crypto");
 const dns = require("dns");
+const dnsPromises = dns.promises;
 
 // Prefer IPv4 first to avoid SMTP failures on networks without IPv6 routing.
 if (typeof dns.setDefaultResultOrder === "function") {
@@ -47,28 +48,42 @@ const smtpSecure =
     ? String(process.env.SMTP_SECURE).toLowerCase() === "true"
     : smtpPort === 465;
 
-// Create transporter with explicit SMTP timeouts and IPv4 preference.
-const transporter = nodemailer.createTransport({
-  host: smtpHost,
-  port: smtpPort,
-  secure: smtpSecure,
-  family: 4,
-  connectionTimeout: 15000,
-  greetingTimeout: 10000,
-  socketTimeout: 20000,
-  dnsTimeout: 10000,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  tls: {
-    servername: smtpHost,
-  },
-});
+const createTransporter = async () => {
+  let resolvedHost = smtpHost;
+
+  if (smtpHost === "smtp.gmail.com") {
+    try {
+      const ipv4Records = await dnsPromises.resolve4(smtpHost);
+      if (ipv4Records.length) {
+        resolvedHost = ipv4Records[0];
+      }
+    } catch (error) {
+      console.warn(`⚠️ SMTP IPv4 lookup failed, falling back to hostname: ${error.message}`);
+    }
+  }
+
+  return nodemailer.createTransport({
+    host: resolvedHost,
+    port: smtpPort,
+    secure: smtpSecure,
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+    connectionTimeout: 15000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000,
+    dnsTimeout: 10000,
+    tls: {
+      servername: smtpHost,
+    },
+  });
+};
 
 // Test endpoint to verify email config
 app.get("/test-email", async (req, res) => {
   try {
+    const transporter = await createTransporter();
     await transporter.verify();
     res.status(200).json({ message: "✅ Email configuration is valid" });
   } catch (error) {
@@ -335,6 +350,7 @@ app.post("/send-feedback", async (req, res) => {
 `,
     };
 
+    const transporter = await createTransporter();
     await transporter.sendMail(mailOptions);
     console.log("✅ Email sent successfully");
 
