@@ -174,34 +174,19 @@ app.post("/send-feedback", async (req, res) => {
       const escapedValue = sanitize(value).trim();
       return escapedValue || "Not Provided";
     };
-    const details = formData.techCheckGroup?.length
-      ? formData.techCheckGroup.map((item) => safe(item)).join(", ")
-      : "Not Provided";
-    const ratingRowsHtml = [
-      {
-        label: "Overall Rating",
-        value: formData.overallRating
-          ? `${formData.overallRating}/5`
-          : "Not Provided",
-      },
-      { label: "Collaboration", value: formData.collabRating },
-      { label: "Delivery", value: formData.deliveryRating },
-      { label: "Technical Skills", value: formData.technicalSkillsRating },
-      { label: "Communication", value: formData.communicationRating },
-      { label: "Quality of Work", value: formData.qualityRating },
-      { label: "Timeliness", value: formData.timelinessRating },
-      { label: "Problem Solving", value: formData.problemSolvingRating },
-      { label: "Team Collaboration", value: formData.teamCollaborationRating },
-      { label: "Initiative & Ownership", value: formData.initiativeRating },
-      {
-        label: "Domain Understanding",
-        value: formData.domainUnderstandingRating,
-      },
-    ]
+    const currentRatingFields = [
+      ["Collaboration", formData.collabRating],
+      ["Delivery", formData.deliveryRating],
+      ["Technical Skills", formData.technicalSkillsRating],
+      ["Problem Solving", formData.problemSolvingRating],
+      ["Initiative & Ownership", formData.initiativeRating],
+    ];
+
+    const ratingRowsHtml = currentRatingFields
       .map(
-        (entry) =>
-          `<tr><td><b>${safe(entry.label)}:</b></td><td>${safe(
-            entry.value
+        ([label, value]) =>
+          `<tr><td><b>${safe(label)}:</b></td><td>${safe(
+            value
           )}</td></tr>`
       )
       .join("");
@@ -278,13 +263,13 @@ app.post("/send-feedback", async (req, res) => {
         ${ratingRowsHtml}
       </table>
 
-      <!-- Technical Strengths -->
+      <!-- Improvements -->
       <h3 style="font-size:15px;color:#0b5e7e;margin-bottom:12px;border-bottom:1px solid #e5e7eb;padding-bottom:6px;">
-        Technical Strengths
+        Areas of Improvement
       </h3>
 
-      <div style="background:#f3f6fa;border:1px solid #e2e8f0;padding:14px;border-radius:6px;font-size:13px;color:#333;margin-bottom:24px;">
-        ${details}
+      <div style="background:#fff7ed;border-left:4px solid #f97316;padding:14px;border-radius:4px;font-size:13px;color:#333;margin-bottom:24px;">
+        ${safe(formData.improvements)}
       </div>
 
       <!-- Comments -->
@@ -292,17 +277,8 @@ app.post("/send-feedback", async (req, res) => {
         Comments
       </h3>
 
-      <div style="background:#f9fafb;border-left:4px solid #0b5e7e;padding:14px;border-radius:4px;font-size:13px;color:#333;margin-bottom:24px;">
+      <div style="background:#f9fafb;border-left:4px solid #0b5e7e;padding:14px;border-radius:4px;font-size:13px;color:#333;">
         ${safe(formData.comments)}
-      </div>
-
-      <!-- Improvements -->
-      <h3 style="font-size:15px;color:#0b5e7e;margin-bottom:12px;border-bottom:1px solid #e5e7eb;padding-bottom:6px;">
-        Areas of Improvement
-      </h3>
-
-      <div style="background:#fff7ed;border-left:4px solid #f97316;padding:14px;border-radius:4px;font-size:13px;color:#333;">
-        ${safe(formData.improvements)}
       </div>
 
     </div>
