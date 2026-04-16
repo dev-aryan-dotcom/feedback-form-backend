@@ -303,9 +303,9 @@ app.post("/send-feedback", async (req, res) => {
     // Email options
     const mailOptions = {
       to: receivers,
-      from: `"New Client Feedback" <${process.env.EMAIL_USER}>`,
+      from: `"Client Feedback" <${process.env.EMAIL_USER}>`,
       replyTo: clientEmail,
-      subject: "New Client Feedback",
+      subject: "Client Feedback",
       html: `
 <div style="margin:0;padding:0;background:#eef2f7;font-family:'Segoe UI',Roboto,Arial,sans-serif;">
   <div style="max-width:760px;width:100%;margin:30px auto;background:#ffffff;border-radius:10px;box-shadow:0 6px 18px rgba(0,0,0,0.08);overflow:hidden;">
