@@ -125,7 +125,7 @@ const sendWithResend = async (mailOptions) => {
   }
 
   const { error } = await resendClient.emails.send({
-    from: `New Client Feedback <${resendFromEmail}>`,
+    from: `Client Feedback <${resendFromEmail}>`,
     to: mailOptions.to,
     replyTo: mailOptions.replyTo,
     subject: mailOptions.subject,
